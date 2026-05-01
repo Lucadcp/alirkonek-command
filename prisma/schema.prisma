@@ -7,6 +7,8 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// ─── Enums ───────────────────────────────────────────────────────────────────
+
 enum MemberRole {
   OWNER
   MANAGER
@@ -30,6 +32,33 @@ enum ShiftStatus {
   CANCELLED
 }
 
+enum ApprovalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum SwapStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+}
+
+enum NotificationType {
+  SHIFT_ASSIGNED
+  TASK_ASSIGNED
+  SHIFT_REMINDER
+  TASK_DUE
+  SWAP_REQUEST
+  APPROVAL_REQUIRED
+  LATE_ALERT
+  NO_SHOW
+  GENERAL
+}
+
+// ─── Core Models ─────────────────────────────────────────────────────────────
+
 model Business {
   id        String   @id @default(cuid())
   name      String
@@ -37,10 +66,13 @@ model Business {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  members   BusinessMember[]
-  locations Location[]
-  shifts    Shift[]
-  tasks     Task[]
+  members       BusinessMember[]
+  locations     Location[]
+  shifts        Shift[]
+  tasks         Task[]
+  conversations Conversation[]
+  approvals     Approval[]
+  auditLogs     AuditLog[]
 }
 
 model User {
@@ -53,10 +85,18 @@ model User {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  memberships BusinessMember[]
-  assignedTasks Task[] @relation("TaskAssignee")
-  createdTasks  Task[] @relation("TaskCreator")
-  attendanceLogs AttendanceLog[]
+  memberships      BusinessMember[]
+  assignedTasks    Task[]            @relation("TaskAssignee")
+  createdTasks     Task[]            @relation("TaskCreator")
+  attendanceLogs   AttendanceLog[]
+  taskComments     TaskComment[]
+  sentMessages     Message[]
+  notifications    Notification[]
+  availability     Availability[]
+  swapRequests     ShiftSwapRequest[] @relation("SwapRequester")
+  swapCoverers     ShiftSwapRequest[] @relation("SwapCoverer")
+  approvalsMade    Approval[]         @relation("ApprovalDecider")
+  auditLogs        AuditLog[]
 }
 
 model BusinessMember {
@@ -73,11 +113,15 @@ model BusinessMember {
   @@unique([businessId, userId])
 }
 
+// ─── Locations & Shifts ──────────────────────────────────────────────────────
+
 model Location {
-  id         String @id @default(cuid())
+  id         String  @id @default(cuid())
   businessId String
   name       String
   address    String?
+  latitude   Float?
+  longitude  Float?
 
   business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
   shifts   Shift[]
@@ -95,10 +139,12 @@ model Shift {
   createdAt   DateTime    @default(now())
   updatedAt   DateTime    @updatedAt
 
-  business    Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  location    Location? @relation(fields: [locationId], references: [id])
+  business    Business          @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  location    Location?         @relation(fields: [locationId], references: [id])
   assignments ShiftAssignment[]
   tasks       Task[]
+  swapRequests ShiftSwapRequest[]
+  conversations Conversation[]
 }
 
 model ShiftAssignment {
@@ -112,6 +158,8 @@ model ShiftAssignment {
 
   @@unique([shiftId, userId])
 }
+
+// ─── Tasks ───────────────────────────────────────────────────────────────────
 
 model Task {
   id          String     @id @default(cuid())
@@ -128,21 +176,146 @@ model Task {
   createdAt   DateTime   @default(now())
   updatedAt   DateTime   @updatedAt
 
-  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
-  shift    Shift?    @relation(fields: [shiftId], references: [id])
-  assignee User?     @relation("TaskAssignee", fields: [assigneeId], references: [id])
-  creator  User?     @relation("TaskCreator", fields: [creatorId], references: [id])
+  business Business      @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  shift    Shift?        @relation(fields: [shiftId], references: [id])
+  assignee User?         @relation("TaskAssignee", fields: [assigneeId], references: [id])
+  creator  User?         @relation("TaskCreator", fields: [creatorId], references: [id])
+  comments TaskComment[]
 }
+
+model TaskComment {
+  id        String   @id @default(cuid())
+  taskId    String
+  userId    String
+  text      String
+  photoUrl  String?
+  createdAt DateTime @default(now())
+
+  task Task @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// ─── Attendance ──────────────────────────────────────────────────────────────
 
 model AttendanceLog {
   id        String   @id @default(cuid())
   userId    String
   shiftId   String?
-  type      String
+  type      String   // clock_in, clock_out, break_start, break_end
   photoUrl  String?
   latitude  Float?
   longitude Float?
   createdAt DateTime @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// ─── Conversations & Messages (Shift Rooms / Mission Rooms) ──────────────────
+
+model Conversation {
+  id         String   @id @default(cuid())
+  businessId String
+  shiftId    String?
+  title      String?
+  type       String   @default("shift_room") // shift_room, handover, general
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  business Business  @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  shift    Shift?    @relation(fields: [shiftId], references: [id])
+  messages Message[]
+}
+
+model Message {
+  id             String   @id @default(cuid())
+  conversationId String
+  senderId       String
+  text           String
+  metadata       String?  // JSON for structured data (handover notes, AI summaries)
+  createdAt      DateTime @default(now())
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sender       User         @relation(fields: [senderId], references: [id], onDelete: Cascade)
+}
+
+// ─── Approvals ───────────────────────────────────────────────────────────────
+
+model Approval {
+  id          String         @id @default(cuid())
+  businessId  String
+  type        String         // shift_swap, leave_request, task_completion
+  referenceId String?        // polymorphic link to related entity
+  status      ApprovalStatus @default(PENDING)
+  deciderId   String?
+  reason      String?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  decider  User?    @relation("ApprovalDecider", fields: [deciderId], references: [id])
+}
+
+// ─── Notifications ───────────────────────────────────────────────────────────
+
+model Notification {
+  id        String           @id @default(cuid())
+  userId    String
+  type      NotificationType
+  title     String
+  body      String?
+  read      Boolean          @default(false)
+  metadata  String?          // JSON for action links, reference ids
+  createdAt DateTime         @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// ─── Audit Log ───────────────────────────────────────────────────────────────
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  businessId String
+  userId     String?
+  action     String   // e.g. shift.created, task.assigned, member.invited
+  entityType String?
+  entityId   String?
+  metadata   String?  // JSON diff or context
+  createdAt  DateTime @default(now())
+
+  business Business @relation(fields: [businessId], references: [id], onDelete: Cascade)
+  user     User?    @relation(fields: [userId], references: [id])
+}
+
+// ─── Availability ────────────────────────────────────────────────────────────
+
+model Availability {
+  id        String   @id @default(cuid())
+  userId    String
+  dayOfWeek Int?     // 0=Sun, 6=Sat; null if specific date
+  date      DateTime? // specific date override
+  startTime String?  // HH:mm
+  endTime   String?  // HH:mm
+  available Boolean  @default(true)
+  note      String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+// ─── Shift Swap Requests ─────────────────────────────────────────────────────
+
+model ShiftSwapRequest {
+  id          String     @id @default(cuid())
+  shiftId     String
+  requesterId String
+  covererId   String?
+  status      SwapStatus @default(PENDING)
+  reason      String?
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  shift     Shift @relation(fields: [shiftId], references: [id], onDelete: Cascade)
+  requester User  @relation("SwapRequester", fields: [requesterId], references: [id], onDelete: Cascade)
+  coverer   User? @relation("SwapCoverer", fields: [covererId], references: [id])
 }
