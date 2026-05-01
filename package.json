@@ -1,0 +1,23 @@
+{
+  "name": "alirkonek-command",
+  "private": true,
+  "version": "0.1.0",
+  "description": "AlirKonek Command Telegram Mini App + Bot",
+  "workspaces": [
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev -w @alirkonek/api & npm run dev -w @alirkonek/web",
+    "build": "npm run build -w @alirkonek/api && npm run build -w @alirkonek/web",
+    "typecheck": "npm run typecheck -w @alirkonek/api && npm run typecheck -w @alirkonek/web",
+    "lint": "npm run lint -w @alirkonek/api && npm run lint -w @alirkonek/web",
+    "db:generate": "prisma generate",
+    "db:push": "prisma db push",
+    "bot:set-webhook": "node apps/api/dist/scripts/setWebhook.js"
+  },
+  "devDependencies": {
+    "@esbuild/darwin-arm64": "^0.27.7",
+    "prisma": "6.19.3",
+    "typescript": "latest"
+  }
+}
