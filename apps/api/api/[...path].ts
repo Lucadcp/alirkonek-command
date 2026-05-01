@@ -41,7 +41,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   if (req.method === 'OPTIONS') return res.status(204).end();
 
   const parts = Array.isArray(req.query.path) ? req.query.path : [];
-  const path = '/' + parts.join('/');
+  const urlPath = new URL(req.url || '/', 'https://alirkonek-command-api.vercel.app').pathname.replace(/^\/api/, '') || '/';
+  const path = parts.length ? '/' + parts.join('/') : urlPath;
 
   if (req.method === 'GET' && path === '/health') return res.json({ ok: true, service: 'alirkonek-command-api' });
   if (req.method === 'GET' && path === '/demo/me') return res.json(demo);
