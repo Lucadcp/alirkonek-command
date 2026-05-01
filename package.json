@@ -16,7 +16,6 @@
     "bot:set-webhook": "node apps/api/dist/scripts/setWebhook.js"
   },
   "devDependencies": {
-    "esbuild": "latest",
     "prisma": "6.19.3",
     "typescript": "latest"
   }
